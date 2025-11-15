@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "654667186322",
+    "project_id": "cue-count",
+    "storage_bucket": "cue-count.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:654667186322:android:096df613c2da1f6684264b",
+        "android_client_info": {
+          "package_name": "com.example.cue_count"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA68yQqGK4_SluR1_5Kc0i5ZvWCMsSIH_E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
