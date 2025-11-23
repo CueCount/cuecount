@@ -92,6 +92,7 @@ class _VisualizationEngineState extends State<VisualizationEngine>
             // Check if it's a secondary button (right click)
             _isPanning = event.buttons == 2;
           },
+
           onPointerMove: (event) {
             if (_lastPointerPosition != null) {
               final delta = event.localPosition - _lastPointerPosition!;
@@ -110,10 +111,12 @@ class _VisualizationEngineState extends State<VisualizationEngine>
               _lastPointerPosition = event.localPosition;
             }
           },
+
           onPointerUp: (event) {
             _lastPointerPosition = null;
             _isPanning = false;
           },
+
           onPointerSignal: (event) {
             if (event is PointerScrollEvent) {
               setState(() {
@@ -136,10 +139,12 @@ class _VisualizationEngineState extends State<VisualizationEngine>
               });
             }
           },
+
           onPointerHover: (event) {
             // Track hover position for potential tooltips
             _checkHover(event.localPosition);
           },
+          
           child: GestureDetector(
             // Add pinch-to-zoom for trackpad
             onScaleStart: (details) {
