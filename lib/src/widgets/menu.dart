@@ -3,19 +3,61 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:reorderables/reorderables.dart';
 import '../../styles.dart';
 import '../services/visualization_engine.dart';
+import 'pill_container.dart';
+import 'pill_cluster.dart';
+import 'pill_trend.dart';
 
-enum MenuTab { environmentList, environment, cluster, explore }
+enum MenuTab { environmentList, environment, explore }
+
+// ========== TAB CONTENT DATA CLASS ==========
+// Holds all the dynamic pieces that vary between tabs
+class TabContent {
+  final IconData leftIcon;
+  final VoidCallback onLeftPressed;
+  final String title;
+  final Color titleColor;
+  final IconData? rightIcon;          // null = no right button (shows empty SizedBox)
+  final VoidCallback? onRightPressed;
+  final Widget mainContent;           // The unique content for this tab
+  final BottomButtonConfig? bottomButton; // null = no bottom button
+
+  const TabContent({
+    required this.leftIcon,
+    required this.onLeftPressed,
+    required this.title,
+    required this.titleColor,
+    this.rightIcon,
+    this.onRightPressed,
+    required this.mainContent,
+    this.bottomButton,
+  });
+}
+
+// Config for the optional bottom button
+class BottomButtonConfig {
+  final String label;
+  final IconData icon;
+  final Color backgroundColor;
+  final VoidCallback onPressed;
+  final double borderRadius;
+
+  const BottomButtonConfig({
+    required this.label,
+    required this.icon,
+    required this.backgroundColor,
+    required this.onPressed,
+    this.borderRadius = 10,
+  });
+}
 
 class VisualizationMenu extends StatefulWidget {
   final User? user;
   final dynamic vizState;
   
-  
   const VisualizationMenu({
     super.key,
     this.user,
     required this.vizState,
-
   });
 
   @override
@@ -29,7 +71,12 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
   String _searchQuery = '';
   List<String> _selectedClusters = [];
   final TextEditingController _searchController = TextEditingController();
-
+  
+  // Track which sections are expanded (by section key)
+  final Map<String, bool> _expandedSections = {
+    'inYourEnvironment': true,
+    'inYourWorkspace': true,
+  };
 
   void _navigateTo(MenuTab tab) {
     setState(() {
@@ -43,20 +90,20 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
       if (_history.isNotEmpty) {
         _currentTab = _history.removeLast();
       } else {
-        // Default fallback: go to environment list
         _currentTab = MenuTab.environmentList;
       }
     });
   }
 
   void _exitMenu() {
-    // Navigate to homepage - adjust based on your navigation setup
     Navigator.of(context).pop();
-    // or: Navigator.of(context).pushReplacementNamed('/home');
   }
 
   @override
   Widget build(BuildContext context) {
+    // Get the dynamic content for the current tab
+    final tabContent = _getTabContent();
+
     return Container(
       width: 420,
       height: MediaQuery.of(context).size.height - 135,
@@ -69,548 +116,334 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
         ),
       ),
       clipBehavior: Clip.antiAlias,
-      child:
-
-      // Container
-      Expanded(
-
-        // Here is where I put conditional logic to show what tab depending on click and passed info
-
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 250),
-          transitionBuilder: (child, animation) {
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0.05, 0),
-                  end: Offset.zero,
-                ).animate(animation),
-                child: child,
-              ),
-            );
-          },
-          child: _buildCurrentTab(),
-        ),
-
-        // End of Conditional Tabs
-
-      ),            
-    );
-  }
-
-  // ========== TAB SWITCHER ==========
-  Widget _buildCurrentTab() {
-    switch (_currentTab) {
-      case MenuTab.environmentList:
-        return _environmentListTab();
-      case MenuTab.environment:
-        return _environmentTab();
-      case MenuTab.cluster:
-        return _clusterTab();
-      case MenuTab.explore:
-        return _exploreTab();
-    }
-  }
-
-  Widget _environmentListTab() { 
-    return 
-    // Content Column
-    Column(
-      children: [
-
-        // Top Navigation
-        Container(
-          width: double.infinity, 
-          padding:EdgeInsets.only(top:30, left:40, right:40, bottom:15,),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              IconButton(
-                icon: Icon(
-                  Icons.chevron_left,
-                  size: 20,
-                  color: Colors.grey.shade600,
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: _exitMenu,
-              ),
-              Text(
-                'Your Workspace',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.cyan,
-                ),
-              ),
-              IconButton(
-                icon: Icon(
-                  Icons.edit_outlined,
-                  size: 18,
-                  color: Colors.grey.shade600,
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: () {
-                  // Handle edit action
-                },
-              ),
-            ],
-          ),
-        ),
-
-        // Grey Content Section
-        Expanded(
-          child: Container(
-            width: double.infinity, 
-            padding: const EdgeInsets.all(40),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(60),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0.05, 0),
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
             ),
-
-            // Container: Pills and Bottom Button
-            child: Column(
-              children: [
-
-                // Pill Content
-                Expanded(
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    child: ReorderableWrap(
-                        spacing: 8.0,
-                        runSpacing: 8.0,
-                        alignment: WrapAlignment.start,
-                        needsLongPressDraggable: false,
-                        onReorder: (int oldIndex, int newIndex) {
-                          setState(() {
-                            VisualizationEngineService.reorderEnvironments(oldIndex, newIndex);
-                          });
-                        },
-                        buildDraggableFeedback: (context, constraint, widget) {
-                          return Material(
-                            elevation: 6.0,
-                            color: Colors.transparent,
-                            borderRadius: BorderRadius.circular(20),
-                            child: ConstrainedBox(
-                              constraints: constraint,
-                              child: widget,
-                            ),
-                          );
-                        },
-                        children: VisualizationEngineService.environments.map((env) {
-                          final isSelected = env == VisualizationEngineService.selectedEnvironment;
-                          return ReorderableWidget(
-                            reorderable: true,  
-                            key: ValueKey(env.id),  
-                            child: GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  VisualizationEngineService.selectEnvironment(env);
-                                  VisualizationEngineService.focusOnSelected();
-                                });
-                                _navigateTo(MenuTab.environment);
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: isSelected 
-                                    ? Colors.cyan.withOpacity(0.1)
-                                    : Colors.grey.shade100,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: isSelected 
-                                      ? Colors.cyan 
-                                      : Colors.grey.shade300,
-                                    width: isSelected ? 2 : 1,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // Add drag handle icon
-                                    Icon(
-                                      Icons.drag_indicator,
-                                      size: 16,
-                                      color: Colors.grey.shade400,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      env.name,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: isSelected 
-                                          ? FontWeight.w600 
-                                          : FontWeight.normal,
-                                        color: isSelected 
-                                          ? Colors.black 
-                                          : Colors.grey.shade700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  
-                ),
-
-                // Bottom Button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        final newEnv = VisualizationEngineService.addNewEnvironment();
-                        VisualizationEngineService.addSampleDataToEnvironment(newEnv);
-                      });
-                    },
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Add New Environment'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.cyan,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );    
-  }
-
-  Widget _environmentTab() { 
-    return 
-    // Content Column
-      Column(
+          );
+        },
+        // ========== SHARED LAYOUT STRUCTURE ==========
+        child: Column(
+          key: ValueKey(_currentTab), // Important for AnimatedSwitcher
           children: [
-
-            // Top Navigation
+            // ===== TOP NAVIGATION BAR =====
             Container(
-              width: double.infinity, 
-              padding:EdgeInsets.only(top:30, left:40, right:40, bottom:15,),
+              width: double.infinity,
+              padding: const EdgeInsets.only(top: 30, left: 40, right: 40, bottom: 15),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
+
+                  // Left Icon Button (dynamic)
                   IconButton(
                     icon: Icon(
-                      Icons.chevron_left,
+                      tabContent.leftIcon,
                       size: 20,
                       color: Colors.grey.shade600,
                     ),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
-                    onPressed: _goBack,
+                    onPressed: tabContent.onLeftPressed,
                   ),
+
+                  // Title (dynamic)
                   Text(
-                    'Environment 1',
+                    tabContent.title,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: Colors.cyan,
+                      color: tabContent.titleColor,
                     ),
                   ),
-                  IconButton(
-                    icon: Icon(
-                      Icons.edit_outlined,
-                      size: 18,
-                      color: Colors.grey.shade600,
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    onPressed: () {
-                      // Handle edit action
-                    },
-                  ),
+
+                  // Right Icon Button (dynamic, or empty space if null)
+                  if (tabContent.rightIcon != null)
+                    IconButton(
+                      icon: Icon(
+                        tabContent.rightIcon,
+                        size: 18,
+                        color: Colors.grey.shade600,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: tabContent.onRightPressed,
+                    )
+                  else
+                    const SizedBox(width: 40), // Placeholder for symmetry
                 ],
               ),
             ),
 
-            // Grey Content Section
+            // ===== GREY CONTENT SECTION =====
             Expanded(
               child: Container(
-                width: double.infinity, 
+                width: double.infinity,
                 padding: const EdgeInsets.all(40),
                 decoration: BoxDecoration(
                   color: AppColors.background,
                   borderRadius: BorderRadius.circular(60),
                 ),
 
-                // Container: Pills and Bottom Button
+                // Inner column: main content + optional bottom button
                 child: Column(
                   children: [
-
-                    // Pill Content
+                    // Main Content Area (dynamic - fully customizable per tab)
                     Expanded(
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(8),
-                        child: ReorderableWrap(
-                          spacing: 8.0,
-                          runSpacing: 8.0,
-                          alignment: WrapAlignment.start,
-                          needsLongPressDraggable: false,
-                          onReorder: (int oldIndex, int newIndex) {
-                            // handle reorder later
-                          },
-                          buildDraggableFeedback: (context, constraint, widget) {
-                            return Material(
-                              elevation: 6.0,
-                              color: Colors.transparent,
-                              borderRadius: BorderRadius.circular(20),
-                              child: ConstrainedBox(
-                                constraints: constraint,
-                                child: widget,
-                              ),
-                            );
-                          },
-                          children: [
-                            ReorderableWidget(
-                              reorderable: true,
-                              key: const ValueKey('pill1'),
-                              child: GestureDetector(
-                                onTap: () {
-                                  // handle tap
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.cyan.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(color: Colors.grey.shade300),
-                                  ),
-                                  child: Text(
-                                    "test pill 1",
-                                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            ReorderableWidget(
-                              reorderable: true,
-                              key: const ValueKey('pill2'),
-                              child: GestureDetector(
-                                onTap: () {
-                                  // handle tap
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.cyan.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(color: Colors.grey.shade300),
-                                  ),
-                                  child: Text(
-                                    "test pill 2",
-                                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        ),
-                      
+                      child: tabContent.mainContent,
                     ),
 
-                    // Bottom Button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          _navigateTo(MenuTab.cluster);
-                        },
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Add New Data Cluster'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.cyan,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 20),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                    // Bottom Button (conditional - only shows if config provided)
+                    if (tabContent.bottomButton != null) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: tabContent.bottomButton!.onPressed,
+                          icon: Icon(tabContent.bottomButton!.icon, size: 18),
+                          label: Text(tabContent.bottomButton!.label),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: tabContent.bottomButton!.backgroundColor,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 20),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                tabContent.bottomButton!.borderRadius,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
             ),
           ],
-        );
+        ),
+      ),
+    );
   }
 
-  Widget _clusterTab() {
-    return
-    // Content Column
-    Column(
-      children: [
+  // ========== TAB CONTENT SWITCHER ==========
+  TabContent _getTabContent() {
+    switch (_currentTab) {
+      case MenuTab.environmentList:
+        return _environmentListContent();
+      case MenuTab.environment:
+        return _environmentContent();
+      case MenuTab.explore:
+        return _exploreContent();
+    }
+  }
 
-        // Top Navigation
-        Container(
-          width: double.infinity, 
-          padding: EdgeInsets.only(top: 30, left: 40, right: 40, bottom: 15),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  // ========== ENVIRONMENT LIST TAB ==========
+  TabContent _environmentListContent() {
+    return TabContent(
+      leftIcon: Icons.chevron_left,
+      onLeftPressed: _exitMenu,
+      title: 'Your Workspace',
+      titleColor: Colors.cyan,
+      rightIcon: Icons.edit_outlined,
+      onRightPressed: () {
+        // Handle edit action
+      },
+      mainContent: _buildEnvironmentListMainContent(),
+      bottomButton: BottomButtonConfig(
+        label: 'Add New Environment',
+        icon: Icons.add,
+        backgroundColor: Colors.cyan,
+        onPressed: () {
+          setState(() {
+            final newEnv = VisualizationEngineService.addNewEnvironment();
+            VisualizationEngineService.addSampleDataToEnvironment(newEnv);
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildEnvironmentListMainContent() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
+      child: ReorderableWrap(
+        spacing: 8.0,
+        runSpacing: 8.0,
+        alignment: WrapAlignment.start,
+        needsLongPressDraggable: false,
+        onReorder: (int oldIndex, int newIndex) {
+          setState(() {
+            VisualizationEngineService.reorderEnvironments(oldIndex, newIndex);
+          });
+        },
+        buildDraggableFeedback: (context, constraint, widget) {
+          return Material(
+            elevation: 6.0,
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            child: ConstrainedBox(
+              constraints: constraint,
+              child: widget,
+            ),
+          );
+        },
+        children: VisualizationEngineService.environments.map((env) {
+          final isSelected = env == VisualizationEngineService.selectedEnvironment;
+          return ReorderableWidget(
+            reorderable: true,
+            key: ValueKey(env.id),
+            child: EnvironmentPill(
+              label: env.name,
+              isSelected: isSelected,
+              showDragHandle: true,
+              onTap: () {
+                setState(() {
+                  VisualizationEngineService.selectEnvironment(env);
+                  VisualizationEngineService.focusOnSelected();
+                });
+                _navigateTo(MenuTab.environment);
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+ // ========== ENVIRONMENT TAB ==========
+  TabContent _environmentContent() {
+    return TabContent(
+      leftIcon: Icons.chevron_left,
+      onLeftPressed: _goBack,
+      title: 'Environment 1',
+      titleColor: Colors.cyan,
+      rightIcon: Icons.edit_outlined,
+      onRightPressed: () {
+        // Handle edit action
+      },
+      mainContent: _buildEnvironmentMainContent(),
+      bottomButton: BottomButtonConfig(
+        label: 'Explore Data Clusters',
+        icon: Icons.add,
+        backgroundColor: Colors.pinkAccent,
+        borderRadius: 30,
+        onPressed: () {
+          _navigateTo(MenuTab.explore);
+        },
+      ),
+    );
+  }
+
+  Widget _buildEnvironmentMainContent() {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section 1: Trends/Data in this Environment
+          PillContainer(
+            label: 'In Data Environment',
+            reorderable: true,
+            collapsed: !(_expandedSections['inDataEnvironment'] ?? true),
+            onToggle: () => setState(() {
+              _expandedSections['inDataEnvironment'] = 
+                  !(_expandedSections['inDataEnvironment'] ?? true);
+            }),
+            onReorder: (oldIndex, newIndex) {
+              // Handle reorder of trends
+            },
             children: [
-              IconButton(
-                icon: Icon(
-                  Icons.chevron_left,
-                  size: 20,
-                  color: Colors.grey.shade600,
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: _goBack,
+              ClusterPillOutline(
+                label: "Assets",
+                isSelected: true,
+                showIcon: false,
+                onTap: () {},
               ),
-              Text(
-                'Select Data Cluster',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.cyan,
-                ),
+              ClusterPillOutline(
+                label: "Liabilities",
+                isSelected: true,
+                showIcon: false,
+                onTap: () {},
               ),
-              const SizedBox(width: 40), // Placeholder for symmetry
+              ClusterPillOutline(
+                label: "Equity",
+                isSelected: true,
+                showIcon: false,
+                onTap: () {},
+              ),
+              ClusterPillOutline(
+                label: "Net Balance",
+                showIcon: false,
+                onTap: () {},
+              ),
+              ClusterPillOutline(
+                label: "Cash & Cash Equivalents",
+                showIcon: false,
+                onTap: () {},
+              ),
             ],
           ),
-        ),
+          const SizedBox(height: 24),
 
-        // Grey Content Section
-        Expanded(
-          child: Container(
-            width: double.infinity, 
-            padding: const EdgeInsets.all(40),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(60),
-            ),
-
-            child: Column(
-              children: [
-
-                // Scrollable Content
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-
-                        // Section 1: In Your Environment
-                        Row(
-                          children: [
-                            const Text(
-                              'In Your Environment',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.keyboard_arrow_down,
-                              size: 20,
-                              color: Colors.grey.shade600,
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        Wrap(
-                          spacing: 8.0,
-                          runSpacing: 8.0,
-                          children: [
-                            _buildClusterPill('Apple Trends'),
-                            _buildClusterPill('US China Trade'),
-                          ],
-                        ),
-
-                        const SizedBox(height: 24),
-
-                        // Section 2: In Your Workspace
-                        Row(
-                          children: [
-                            const Text(
-                              'In Your Workspace',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.keyboard_arrow_down,
-                              size: 20,
-                              color: Colors.grey.shade600,
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 12),
-                        
-                        Wrap(
-                          spacing: 8.0,
-                          runSpacing: 8.0,
-                          children: [
-                            _buildClusterPill('Apple Trends'),
-                            _buildClusterPill('US China Trade'),
-                            _buildClusterPill('US India Trade'),
-                            _buildClusterPill('AI Innovation'),
-                            _buildClusterPill('US GDP'),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Bottom Button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      _navigateTo(MenuTab.explore);
-                    },
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Explore Data Clusters'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.pinkAccent,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          // Section 2: Add from Environment
+          PillContainer(
+            label: 'Add Data from Environment',
+            reorderable: false,
+            collapsed: !(_expandedSections['addFromEnvironment'] ?? true),
+            onToggle: () => setState(() {
+              _expandedSections['addFromEnvironment'] = 
+                  !(_expandedSections['addFromEnvironment'] ?? true);
+            }),
+            children: [
+              ClusterPill(label: 'Apple Trends', onTap: () {}),
+              ClusterPill(label: 'US China Trade', onTap: () {}),
+            ],
           ),
-        ),
-      ],
-    );
+          const SizedBox(height: 24),
 
+          // Section 3: Add from Workspace
+          PillContainer(
+            label: 'Add Data from Workspace',
+            reorderable: false,
+            collapsed: !(_expandedSections['addFromWorkspace'] ?? true),
+            onToggle: () => setState(() {
+              _expandedSections['addFromWorkspace'] = 
+                  !(_expandedSections['addFromWorkspace'] ?? true);
+            }),
+            children: [
+              ClusterPill(label: 'Apple Trends', onTap: () {}),
+              ClusterPill(label: 'US China Trade', onTap: () {}),
+              ClusterPill(label: 'US India Trade', onTap: () {}),
+              ClusterPill(label: 'AI Innovation', onTap: () {}),
+              ClusterPill(label: 'US GDP', onTap: () {}),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // ========== EXPLORE TAB ==========
+  TabContent _exploreContent() {
+    return TabContent(
+      leftIcon: Icons.chevron_left,
+      onLeftPressed: _goBack,
+      title: 'Explore Data Clusters',
+      titleColor: Colors.pinkAccent,
+      rightIcon: null, // No right button
+      onRightPressed: null,
+      mainContent: _buildExploreMainContent(),
+      bottomButton: null, // No bottom button for this tab
+    );
   }
 
-  Widget _exploreTab() {
-    // Dummy tags
+  Widget _buildExploreMainContent() {
     final List<String> tags = [
       'All Data Constellations',
       'Stock Comparisons',
@@ -621,7 +454,6 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
       'US Socioeconomic Trends',
     ];
 
-    // Dummy clusters (would come from Firebase)
     final List<Map<String, dynamic>> allClusters = [
       {'name': 'APPL', 'tags': ['Stock Comparisons']},
       {'name': 'US-China Trade', 'tags': ['Stock Comparisons', 'US - Int Trade']},
@@ -633,7 +465,6 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
       {'name': 'MSFT', 'tags': ['Stock Comparisons']},
     ];
 
-    // Filter clusters based on search
     final filteredClusters = _searchQuery.isEmpty
         ? <Map<String, dynamic>>[]
         : allClusters.where((c) {
@@ -646,140 +477,75 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
           }).toList();
 
     return Column(
-      key: const ValueKey('exploreTab'),
       children: [
-        // Top Navigation
+        // Search Bar
         Container(
-          width: double.infinity,
-          padding: const EdgeInsets.only(top: 30, left: 40, right: 40, bottom: 15),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              IconButton(
-                icon: Icon(
-                  Icons.chevron_left,
-                  size: 20,
-                  color: Colors.grey.shade600,
+              Icon(Icons.search, color: Colors.grey.shade500),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) {
+                    setState(() {
+                      _searchQuery = value;
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search',
+                    hintStyle: TextStyle(color: Colors.grey.shade500),
+                    border: InputBorder.none,
+                  ),
                 ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: _goBack,
               ),
-              const Text(
-                'Explore Data Clusters',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.pinkAccent,
+              if (_searchQuery.isNotEmpty)
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _searchQuery = '';
+                      _searchController.clear();
+                    });
+                  },
+                  child: Icon(Icons.close, color: Colors.grey.shade500, size: 20),
                 ),
-              ),
-              const SizedBox(width: 40),
             ],
           ),
         ),
+        const SizedBox(height: 20),
 
-        // Grey Content Section
+        // Content: Tags or Search Results
         Expanded(
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(40),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(60),
-            ),
-            child: Column(
-              children: [
-                // Search Bar
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.search, color: Colors.grey.shade500),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: (value) {
-                            setState(() {
-                              _searchQuery = value;
-                            });
-                          },
-                          decoration: InputDecoration(
-                            hintText: 'Search',
-                            hintStyle: TextStyle(color: Colors.grey.shade500),
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                      if (_searchQuery.isNotEmpty)
-                        GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _searchQuery = '';
-                              _searchController.clear();
-                            });
-                          },
-                          child: Icon(Icons.close, color: Colors.grey.shade500, size: 20),
-                        ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // Content: Tags or Search Results
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: _searchQuery.isEmpty
-                        ? _buildTagsList(tags)
-                        : _buildClusterResults(filteredClusters),
-                  ),
-                ),
-              ],
-            ),
+          child: SingleChildScrollView(
+            child: _searchQuery.isEmpty
+                ? _buildTagsList(tags)
+                : _buildClusterResults(filteredClusters),
           ),
         ),
       ],
     );
   }
 
+  // ========== HELPER WIDGETS ==========
+
   Widget _buildTagsList(List<String> tags) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: tags.map((tag) {
-        return GestureDetector(
+        return TrendTagPill(
+          label: tag,
           onTap: () {
             setState(() {
               _searchQuery = '#${tag.replaceAll(' ', '-')}';
               _searchController.text = _searchQuery;
             });
           },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Row(
-              children: [
-                Text(
-                  tag,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Icon(
-                  Icons.sell_outlined,
-                  size: 18,
-                  color: Colors.grey.shade600,
-                ),
-              ],
-            ),
-          ),
         );
       }).toList(),
     );
@@ -791,7 +557,9 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
       runSpacing: 8.0,
       children: clusters.map((cluster) {
         final isSelected = _selectedClusters.contains(cluster['name']);
-        return GestureDetector(
+        return ClusterPill(
+          label: cluster['name'],
+          isSelected: isSelected,
           onTap: () {
             setState(() {
               if (isSelected) {
@@ -801,68 +569,8 @@ class _VisualizationMenuState extends State<VisualizationMenu> {
               }
             });
           },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: isSelected ? Colors.cyan : const Color(0xFF6366F1),
-              borderRadius: BorderRadius.circular(25),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  cluster['name'],
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(
-                  isSelected ? Icons.check : Icons.chevron_right,
-                  size: 18,
-                  color: Colors.white,
-                ),
-              ],
-            ),
-          ),
         );
       }).toList(),
-    );
-  }
-
-  Widget _buildClusterPill(String label) {
-    return GestureDetector(
-      onTap: () {
-        // Handle pill tap
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFF6366F1),
-          borderRadius: BorderRadius.circular(25),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(width: 6),
-            const Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: Colors.white,
-            ),
-          ],
-        ),
-      ),
     );
   }
 
