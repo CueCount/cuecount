@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 /// Default colors for cluster pills
 class ClusterPillColors {
-  static const Color defaultBackground = Color(0xFF6366F1); // Indigo
+  static const Color defaultBackground = Color(0xFF6366F1);
   static const Color selectedBackground = Colors.cyan;
   static const Color text = Colors.white;
   static const Color icon = Colors.white;
