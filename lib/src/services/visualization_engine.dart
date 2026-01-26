@@ -1,783 +1,634 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:vector_math/vector_math.dart' as vector;
 import 'dart:math' as math;
-import 'dart:ui' as ui;
-import 'connections.dart' as dt;
 
-class VisualizationEngine extends StatefulWidget {
-  final List<DocumentSnapshot> documents;
-  final String companyName;
+// ============ DATA MODELS ============
 
-  const VisualizationEngine({
-    super.key,
-    required this.documents,
-    required this.companyName,
+/// Represents a 3D graph environment/workspace
+class GraphEnvironment3D {
+  final String id;
+  final String name;
+  final vector.Vector3 position;
+  final List<DataPlot3D> plots;
+  
+  GraphEnvironment3D({
+    required this.id,
+    required this.name,
+    vector.Vector3? position,
+    List<DataPlot3D>? plots,
+  }) : position = position ?? vector.Vector3.zero(),
+       plots = plots ?? [];
+  
+  /// Create a copy with updated fields
+  GraphEnvironment3D copyWith({
+    String? id,
+    String? name,
+    vector.Vector3? position,
+    List<DataPlot3D>? plots,
+  }) {
+    return GraphEnvironment3D(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      position: position ?? this.position,
+      plots: plots ?? this.plots,
+    );
+  }
+}
+
+/// Represents a single data series/plot within an environment
+class DataPlot3D {
+  final String id;
+  final String fieldName;
+  final List<DataPoint3D> data;
+  final Color color;
+  final PlotType plotType;
+  final bool visible;
+  
+  DataPlot3D({
+    required this.id,
+    required this.fieldName,
+    required this.data,
+    required this.color,
+    this.plotType = PlotType.scatter,
+    this.visible = true,
   });
-
-  @override
-  State<VisualizationEngine> createState() => _VisualizationEngineState();
-}
-
-class _VisualizationEngineState extends State<VisualizationEngine>
-    with TickerProviderStateMixin {
-  late AnimationController _rotationController;
-  late AnimationController _animationController;
   
-  // Data table and visualization data
-  late dt.DataTable _dataTable;
-  late dt.TableVisualizationData _visualizationData;
-  
-  // 3D transformation parameters
-  double _rotationX = 0.3;
-  double _rotationY = 0.5;
-  double _rotationZ = 0.0;
-  double _zoom = 1.0;
-  Offset _pan = Offset.zero;
-  
-  // Mouse/touch tracking
-  Offset? _lastPointerPosition;
-  bool _isPanning = false;
-  
-  // Selected data point
-  DataPoint? _hoveredPoint;
-  
-  // Visualization settings
-  bool _showGrid = true;
-  bool _showAxes = true;
-  bool _showLabels = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeData();
-    
-    _rotationController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 20),
+  DataPlot3D copyWith({
+    String? id,
+    String? fieldName,
+    List<DataPoint3D>? data,
+    Color? color,
+    PlotType? plotType,
+    bool? visible,
+  }) {
+    return DataPlot3D(
+      id: id ?? this.id,
+      fieldName: fieldName ?? this.fieldName,
+      data: data ?? this.data,
+      color: color ?? this.color,
+      plotType: plotType ?? this.plotType,
+      visible: visible ?? this.visible,
     );
-    
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 500),
-    );
-  }
-
-  void _initializeData() {
-    // Build the data table from documents
-    _dataTable = dt.DataTableBuilder.buildFromDocuments(widget.documents);
-    _visualizationData = dt.TableVisualizationData.fromTable(_dataTable);
-    
-    print('Data table initialized:');
-    print('  Quarters: ${_dataTable.quarters}');
-    print('  Fields: ${_dataTable.numericFieldNames}');
-    print('  Total connections: ${_visualizationData.connections.length}');
-  }
-
-  @override
-  void dispose() {
-    _rotationController.dispose();
-    _animationController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // Main visualization canvas
-        Listener(
-          onPointerDown: (event) {
-            _lastPointerPosition = event.localPosition;
-            // Check if it's a secondary button (right click)
-            _isPanning = event.buttons == 2;
-          },
-          onPointerMove: (event) {
-            if (_lastPointerPosition != null) {
-              final delta = event.localPosition - _lastPointerPosition!;
-              
-              setState(() {
-                if (_isPanning) {
-                  // Pan with right mouse button
-                  _pan += delta;
-                } else {
-                  // Rotate with left mouse button
-                  _rotationY += delta.dx * 0.01;
-                  _rotationX += delta.dy * 0.01;
-                }
-              });
-              
-              _lastPointerPosition = event.localPosition;
-            }
-          },
-          onPointerUp: (event) {
-            _lastPointerPosition = null;
-            _isPanning = false;
-          },
-          onPointerSignal: (event) {
-            if (event is PointerScrollEvent) {
-              setState(() {
-                final scrollDelta = event.scrollDelta;
-                
-                // Adjust zoom sensitivity based on platform
-                // Trackpads typically have smaller deltas than mouse wheels
-                double zoomFactor;
-                if (scrollDelta.dy.abs() < 20) {
-                  // Likely a trackpad (smooth scrolling)
-                  zoomFactor = 0.002;
-                } else {
-                  // Likely a mouse wheel (discrete steps)
-                  zoomFactor = 0.01;
-                }
-                
-                // Apply zoom with the calculated factor
-                final zoomDelta = 1 - (scrollDelta.dy * zoomFactor);
-                _zoom = (_zoom * zoomDelta).clamp(0.1, 5.0);
-              });
-            }
-          },
-          onPointerHover: (event) {
-            // Track hover position for potential tooltips
-            _checkHover(event.localPosition);
-          },
-          child: GestureDetector(
-            // Add pinch-to-zoom for trackpad
-            onScaleStart: (details) {
-              // Store initial zoom when gesture starts
-            },
-            onScaleUpdate: (details) {
-              setState(() {
-                // Apply pinch zoom
-                _zoom = (_zoom * details.scale).clamp(0.1, 5.0);
-              });
-            },
-            child: MouseRegion(
-              cursor: _isPanning ? SystemMouseCursors.grabbing : SystemMouseCursors.grab,
-              child: Container(
-                color: Colors.black,
-                child: CustomPaint(
-                  size: Size.infinite,
-                  painter: TableVisualizationPainter(
-                    dataTable: _dataTable,
-                    visualizationData: _visualizationData,
-                    rotationX: _rotationX,
-                    rotationY: _rotationY,
-                    rotationZ: _rotationZ,
-                    zoom: _zoom,
-                    pan: _pan,
-                    showGrid: _showGrid,
-                    showAxes: _showAxes,
-                    showLabels: _showLabels,
-                    hoveredPoint: _hoveredPoint,
-                    animation: _animationController,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        
-        // Hover tooltip
-        ..._hoveredPoint != null ? [
-          Positioned(
-            left: _hoveredPoint!.screenPosition.dx + 10,
-            top: _hoveredPoint!.screenPosition.dy + 10,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.8),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.grey.shade700),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _hoveredPoint!.fieldName.replaceAll('_', ' ').toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Value: ${_formatNumber(_hoveredPoint!.value)}',
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
-                  ),
-                  ..._hoveredPoint!.period != null ? [
-                    Text(
-                      'Period: ${_hoveredPoint!.period}',
-                      style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
-                    ),
-                  ] : [],
-                ],
-              ),
-            ),
-          ),
-        ] : [],
-        
-        // Instructions overlay with zoom level indicator
-        Positioned(
-          top: 16,
-          left: 16,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Left drag: Rotate • Right drag: Pan • Scroll: Zoom',
-                  style: TextStyle(color: Colors.white, fontSize: 12),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Zoom: ${(_zoom * 100).toStringAsFixed(0)}%',
-                  style: TextStyle(color: Colors.grey.shade400, fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-        ),
-        
-        // Zoom controls buttons
-        Positioned(
-          bottom: 16,
-          right: 16,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  onPressed: () {
-                    setState(() {
-                      _zoom = (_zoom * 1.2).clamp(0.1, 5.0);
-                    });
-                  },
-                  icon: const Icon(Icons.zoom_in, color: Colors.white),
-                  tooltip: 'Zoom In',
-                ),
-                IconButton(
-                  onPressed: () {
-                    setState(() {
-                      _zoom = (_zoom / 1.2).clamp(0.1, 5.0);
-                    });
-                  },
-                  icon: const Icon(Icons.zoom_out, color: Colors.white),
-                  tooltip: 'Zoom Out',
-                ),
-                IconButton(
-                  onPressed: () {
-                    setState(() {
-                      _zoom = 1.0;
-                      _pan = Offset.zero;
-                      _rotationX = 0.3;
-                      _rotationY = 0.5;
-                    });
-                  },
-                  icon: const Icon(Icons.center_focus_strong, color: Colors.white),
-                  tooltip: 'Reset View',
-                ),
-              ],
-            ),
-          ),
-        ),
- 
-        
-        // Hover tooltip
-        if (_hoveredPoint != null)
-          Positioned(
-            left: _hoveredPoint!.screenPosition.dx + 10,
-            top: _hoveredPoint!.screenPosition.dy + 10,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.8),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.grey.shade700),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _hoveredPoint!.fieldName.replaceAll('_', ' ').toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Value: ${_formatNumber(_hoveredPoint!.value)}',
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
-                  ),
-                  if (_hoveredPoint!.period != null)
-                    Text(
-                      'Period: ${_hoveredPoint!.period}',
-                      style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        
-        // Instructions overlay
-        Positioned(
-          top: 16,
-          left: 16,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text(
-              'Left drag: Rotate • Right drag: Pan • Scroll: Zoom',
-              style: TextStyle(color: Colors.white, fontSize: 12),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-  
-  void _checkHover(Offset position) {
-    // This would check if the position is near any data point
-    // For simplicity, we're not implementing full hit testing here
-    setState(() {
-      _hoveredPoint = null;
-    });
-  }
-  
-  String _formatNumber(double value) {
-    if (value.abs() >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(1)}M';
-    } else if (value.abs() >= 1000) {
-      return '${(value / 1000).toStringAsFixed(1)}K';
-    }
-    return value.toStringAsFixed(0);
   }
 }
 
-class TableVisualizationPainter extends CustomPainter {
-  final dt.DataTable dataTable;
-  final dt.TableVisualizationData visualizationData;
+/// A single 3D data point
+class DataPoint3D {
+  final double x;
+  final double y;
+  final double z;
+  final String label;
+  final dynamic value;
+  final String? date;
+  
+  const DataPoint3D({
+    required this.x,
+    required this.y,
+    required this.z,
+    required this.label,
+    this.value,
+    this.date,
+  });
+}
+
+/// Types of plots the engine can render
+enum PlotType {
+  scatter,
+  line,
+  bar,
+  surface,
+}
+
+/// Camera/view state for the 3D visualization
+class CameraState {
   final double rotationX;
   final double rotationY;
   final double rotationZ;
   final double zoom;
-  final Offset pan;
-  final bool showGrid;
-  final bool showAxes;
-  final bool showLabels;
-  final DataPoint? hoveredPoint;
-  final Animation<double> animation;
+  final double panX;
+  final double panY;
+  
+  const CameraState({
+    this.rotationX = -0.5,
+    this.rotationY = 0.5,
+    this.rotationZ = 0.0,
+    this.zoom = 1.0,
+    this.panX = 0.0,
+    this.panY = 0.0,
+  });
+  
+  /// Default camera state
+  static const CameraState initial = CameraState();
+  
+  CameraState copyWith({
+    double? rotationX,
+    double? rotationY,
+    double? rotationZ,
+    double? zoom,
+    double? panX,
+    double? panY,
+  }) {
+    return CameraState(
+      rotationX: rotationX ?? this.rotationX,
+      rotationY: rotationY ?? this.rotationY,
+      rotationZ: rotationZ ?? this.rotationZ,
+      zoom: zoom ?? this.zoom,
+      panX: panX ?? this.panX,
+      panY: panY ?? this.panY,
+    );
+  }
+  
+  /// Apply rotation delta
+  CameraState rotate(double deltaX, double deltaY) {
+    return copyWith(
+      rotationX: rotationX - deltaY * 0.01,
+      rotationY: rotationY + deltaX * 0.01,
+    );
+  }
+  
+  /// Apply pan delta
+  CameraState pan(double deltaX, double deltaY) {
+    return copyWith(
+      panX: panX + deltaX * 2,
+      panY: panY - deltaY * 2,
+    );
+  }
+  
+  /// Apply zoom delta
+  CameraState zoomBy(double delta) {
+    return copyWith(
+      zoom: (zoom - delta * 0.001).clamp(0.5, 5.0),
+    );
+  }
+  
+  /// Zoom in by factor
+  CameraState zoomIn([double factor = 1.2]) {
+    return copyWith(
+      zoom: (zoom * factor).clamp(0.5, 5.0),
+    );
+  }
+  
+  /// Zoom out by factor
+  CameraState zoomOut([double factor = 0.8]) {
+    return copyWith(
+      zoom: (zoom * factor).clamp(0.5, 5.0),
+    );
+  }
+}
 
-  TableVisualizationPainter({
-    required this.dataTable,
-    required this.visualizationData,
-    required this.rotationX,
-    required this.rotationY,
-    required this.rotationZ,
-    required this.zoom,
-    required this.pan,
-    required this.showGrid,
-    required this.showAxes,
-    required this.showLabels,
-    this.hoveredPoint,
-    required this.animation,
-  }) : super(repaint: animation);
 
+// ============ 3D VISUALIZATION PAINTER ============
+
+/// CustomPainter that renders 3D environments and plots
+class Visualization3DPainter extends CustomPainter {
+  final List<GraphEnvironment3D> environments;
+  final String? selectedEnvironmentId;
+  final CameraState camera;
+  
+  Visualization3DPainter({
+    required this.environments,
+    this.selectedEnvironmentId,
+    required this.camera,
+  });
+  
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2) + pan;
+    final center = Offset(size.width / 2, size.height / 2);
+    canvas.translate(center.dx + camera.panX, center.dy + camera.panY);
     
-    // Draw grid if enabled
-    if (showGrid) {
-      _drawGrid(canvas, size, center);
-    }
+    // Build transformation matrix
+    final transform = vector.Matrix4.identity()
+      ..setEntry(3, 2, 0.001) // Perspective
+      ..rotateX(camera.rotationX)
+      ..rotateY(camera.rotationY)
+      ..rotateZ(camera.rotationZ)
+      ..scale(camera.zoom);
     
-    // Draw axes if enabled
-    if (showAxes) {
-      _drawAxes(canvas, size, center);
-    }
-    
-    // Draw the data table visualization
-    _drawDataTable(canvas, size, center);
-  }
-
-  void _drawGrid(Canvas canvas, Size size, Offset center) {
-    final paint = Paint()
-      ..color = Colors.grey.withOpacity(0.1)
-      ..strokeWidth = 1;
-
-    const gridSize = 50.0;
-    final gridCount = 10;
-
-    for (int i = -gridCount; i <= gridCount; i++) {
-      final point1 = _project3D(
-        Point3D(i * gridSize, 0, -gridCount * gridSize),
-        center,
-      );
-      final point2 = _project3D(
-        Point3D(i * gridSize, 0, gridCount * gridSize),
-        center,
-      );
-      canvas.drawLine(point1, point2, paint);
-
-      final point3 = _project3D(
-        Point3D(-gridCount * gridSize, 0, i * gridSize),
-        center,
-      );
-      final point4 = _project3D(
-        Point3D(gridCount * gridSize, 0, i * gridSize),
-        center,
-      );
-      canvas.drawLine(point3, point4, paint);
-    }
-  }
-
-  void _drawAxes(Canvas canvas, Size size, Offset center) {
-    final axisPaint = Paint()
-      ..strokeWidth = 2;
-
-    // X-axis (red) - Time/Quarters
-    axisPaint.color = Colors.red;
-    canvas.drawLine(
-      _project3D(Point3D(0, 0, 0), center),
-      _project3D(Point3D(200, 0, 0), center),
-      axisPaint,
-    );
-
-    // Y-axis (green) - Values
-    axisPaint.color = Colors.green;
-    canvas.drawLine(
-      _project3D(Point3D(0, 0, 0), center),
-      _project3D(Point3D(0, 200, 0), center),
-      axisPaint,
-    );
-
-    // Z-axis (blue) - Different fields
-    axisPaint.color = Colors.blue;
-    canvas.drawLine(
-      _project3D(Point3D(0, 0, 0), center),
-      _project3D(Point3D(0, 0, 200), center),
-      axisPaint,
-    );
-  }
-
-  void _drawDataTable(Canvas canvas, Size size, Offset center) {
-    final fieldColors = {
-      'total_assets': Colors.green,
-      'total_liabilities': Colors.red,
-      'total_equity': Colors.blue,
-      'net_income': Colors.orange,
-      'revenue': Colors.purple,
-      'cash': Colors.cyan,
-      'accounts_payable': Colors.pink,
-      'accounts_receivable': Colors.amber,
-      'inventory': Colors.lime,
-      'long_term_debt': Colors.deepOrange,
-      'short_term_debt': Colors.indigo,
-      'retained_earnings': Colors.teal,
-    };
-
-    final numericFields = dataTable.numericFieldNames;
-    final quarterCount = dataTable.quarters.length;
-    
-    // Calculate spacing
-    final xSpacing = 100.0; // Space between quarters
-    final zSpacing = 60.0;  // Space between fields
-    final xOffset = -(quarterCount - 1) * xSpacing / 2;
-    final zOffset = -(numericFields.length - 1) * zSpacing / 2;
-    
-    // Use a consistent Y scale for all fields
-    final yScale = 200.0; // Height scale for visualization
-
-    // Draw each field as a line through quarters
-    for (int fieldIndex = 0; fieldIndex < numericFields.length; fieldIndex++) {
-      final fieldName = numericFields[fieldIndex];
-      final row = dataTable.rows.firstWhere(
-        (r) => r.fieldName == fieldName,
-        orElse: () => dt.DataRow(fieldName: fieldName, cells: []),
-      );
-      
-      if (row.cells.isEmpty) continue;
-      
-      final color = fieldColors[fieldName] ?? 
-                   Colors.primaries[fieldIndex % Colors.primaries.length];
-      final linePaint = Paint()
-        ..color = color.withOpacity(0.8)
-        ..strokeWidth = 2
-        ..style = PaintingStyle.stroke;
-      
-      final pointPaint = Paint()
-        ..color = color
-        ..style = PaintingStyle.fill;
-      
-      final points = <Offset>[];
-      final dataPoints = <DataPointInfo>[];
-      
-      // Draw points and collect positions
-      for (int quarterIndex = 0; quarterIndex < row.cells.length; quarterIndex++) {
-        final cell = row.cells[quarterIndex];
-        final numericValue = cell.numericValue;
-        
-        if (numericValue == null) continue;
-        
-        // Calculate position
-        final x = xOffset + quarterIndex * xSpacing;
-        final z = zOffset + fieldIndex * zSpacing;
-        
-        // Use global normalization for consistent scale across all fields
-        final normalizedValue = visualizationData.normalizeValueGlobal(numericValue);
-        final y = -normalizedValue * yScale; // Negative because canvas Y is inverted
-        
-        final point3d = Point3D(x, y, z);
-        final screenPoint = _project3D(point3d, center);
-        points.add(screenPoint);
-        
-        // Store data point info for hover detection
-        dataPoints.add(DataPointInfo(
-          screenPosition: screenPoint,
-          fieldName: fieldName,
-          value: numericValue,
-          quarter: dataTable.quarters[quarterIndex],
-          documentId: cell.documentId,
-        ));
-        
-        // Draw the data point
-        canvas.drawCircle(screenPoint, 6, pointPaint);
-        
-        // Draw value label at each point for debugging
-        if (showLabels && quarterIndex == 0) { // Only show at first point
-          final valuePainter = TextPainter(
-            text: TextSpan(
-              text: _formatValue(numericValue),
-              style: TextStyle(
-                color: color.withOpacity(0.7),
-                fontSize: 10,
-              ),
-            ),
-            textDirection: TextDirection.ltr,
-          );
-          valuePainter.layout();
-          valuePainter.paint(canvas, screenPoint + const Offset(8, -8));
-        }
-      }
-      
-      // Draw connecting lines
-      if (points.length > 1) {
-        final path = Path();
-        path.moveTo(points.first.dx, points.first.dy);
-        for (int i = 1; i < points.length; i++) {
-          path.lineTo(points[i].dx, points[i].dy);
-        }
-        canvas.drawPath(path, linePaint);
-      }
-      
-      // Draw field label
-      if (showLabels && points.isNotEmpty) {
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: fieldName.replaceAll('_', ' ').toUpperCase(),
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        );
-        textPainter.layout();
-        textPainter.paint(canvas, points.first - const Offset(0, 20));
-      }
-    }
-    
-    // Draw quarter labels on X-axis
-    if (showLabels) {
-      for (int i = 0; i < dataTable.quarters.length; i++) {
-        final x = xOffset + i * xSpacing;
-        final point = _project3D(Point3D(x, 20, -30), center);
-        
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: dataTable.quarters[i],
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 11,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        );
-        textPainter.layout();
-        textPainter.paint(canvas, point - Offset(textPainter.width / 2, 0));
-      }
-    }
-    
-    // Draw scale reference
-    if (showGrid) {
-      _drawScaleReference(canvas, size, center);
+    // Draw each environment
+    for (var environment in environments) {
+      final isSelected = environment.id == selectedEnvironmentId;
+      _drawEnvironment(canvas, environment, transform, isSelected);
     }
   }
   
-  void _drawScaleReference(Canvas canvas, Size size, Offset center) {
-    // Draw Y-axis scale markers
-    final scalePaint = Paint()
-      ..color = Colors.white.withOpacity(0.3)
-      ..strokeWidth = 1;
+  void _drawEnvironment(
+    Canvas canvas,
+    GraphEnvironment3D environment,
+    vector.Matrix4 transform,
+    bool isSelected,
+  ) {
+    canvas.save();
     
-    final min = visualizationData.globalMin;
-    final max = visualizationData.globalMax;
+    // Translate to environment position
+    final envTransform = transform.clone()
+      ..translate(
+        environment.position.x,
+        environment.position.y,
+        environment.position.z,
+      );
     
-    for (int i = 0; i <= 4; i++) {
-      final value = min + (max - min) * i / 4;
-      final normalizedValue = i / 4.0;
-      final y = -normalizedValue * 200;
+    // Draw grid
+    _drawGrid(canvas, envTransform);
+    
+    // Draw axes
+    _drawAxes(canvas, envTransform, isSelected);
+    
+    // Draw plots
+    for (var plot in environment.plots) {
+      if (plot.visible) {
+        switch (plot.plotType) {
+          case PlotType.scatter:
+            _drawScatterPlot(canvas, plot, envTransform);
+            break;
+          case PlotType.line:
+            _drawLinePlot(canvas, plot, envTransform);
+            break;
+          case PlotType.bar:
+            _drawBarPlot(canvas, plot, envTransform);
+            break;
+          case PlotType.surface:
+            _drawScatterPlot(canvas, plot, envTransform); // Fallback
+            break;
+        }
+      }
+    }
+    
+    // Draw environment label
+    _drawEnvironmentLabel(canvas, environment, envTransform, isSelected);
+    
+    // Draw selection indicator
+    if (isSelected) {
+      _drawSelectionBox(canvas, envTransform);
+    }
+    
+    canvas.restore();
+  }
+  
+  void _drawGrid(Canvas canvas, vector.Matrix4 transform) {
+    final paint = Paint()
+      ..color = Colors.grey.withOpacity(0.2)
+      ..strokeWidth = 0.5
+      ..style = PaintingStyle.stroke;
+    
+    const gridSize = 100.0;
+    const gridLines = 10;
+    const step = gridSize / gridLines;
+    
+    for (int i = 0; i <= gridLines; i++) {
+      final offset = -gridSize / 2 + i * step;
       
-      final startPoint = _project3D(Point3D(-250, y, 0), center);
-      final endPoint = _project3D(Point3D(-240, y, 0), center);
+      // Horizontal lines (along X axis)
+      final h1 = _transform3DPoint(
+        vector.Vector3(-gridSize / 2, 0, offset),
+        transform,
+      );
+      final h2 = _transform3DPoint(
+        vector.Vector3(gridSize / 2, 0, offset),
+        transform,
+      );
       
-      canvas.drawLine(startPoint, endPoint, scalePaint);
+      if (h1 != null && h2 != null) {
+        canvas.drawLine(h1, h2, paint);
+      }
       
+      // Vertical lines (along Z axis)
+      final v1 = _transform3DPoint(
+        vector.Vector3(offset, 0, -gridSize / 2),
+        transform,
+      );
+      final v2 = _transform3DPoint(
+        vector.Vector3(offset, 0, gridSize / 2),
+        transform,
+      );
+      
+      if (v1 != null && v2 != null) {
+        canvas.drawLine(v1, v2, paint);
+      }
+    }
+  }
+  
+  void _drawAxes(Canvas canvas, vector.Matrix4 transform, bool isSelected) {
+    const axisLength = 100.0;
+    final lineWidth = isSelected ? 2.5 : 2.0;
+    final opacity = isSelected ? 1.0 : 0.7;
+    
+    // X axis - Red
+    _drawAxis(
+      canvas, transform,
+      vector.Vector3(-axisLength / 2, 0, 0),
+      vector.Vector3(axisLength / 2, 0, 0),
+      Colors.red.withOpacity(opacity),
+      lineWidth,
+      'X',
+    );
+    
+    // Y axis - Green
+    _drawAxis(
+      canvas, transform,
+      vector.Vector3(0, -axisLength / 2, 0),
+      vector.Vector3(0, axisLength / 2, 0),
+      Colors.green.withOpacity(opacity),
+      lineWidth,
+      'Y',
+    );
+    
+    // Z axis - Blue
+    _drawAxis(
+      canvas, transform,
+      vector.Vector3(0, 0, -axisLength / 2),
+      vector.Vector3(0, 0, axisLength / 2),
+      Colors.blue.withOpacity(opacity),
+      lineWidth,
+      'Z',
+    );
+  }
+  
+  void _drawAxis(
+    Canvas canvas,
+    vector.Matrix4 transform,
+    vector.Vector3 start,
+    vector.Vector3 end,
+    Color color,
+    double lineWidth,
+    String label,
+  ) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = lineWidth
+      ..style = PaintingStyle.stroke;
+    
+    final startPoint = _transform3DPoint(start, transform);
+    final endPoint = _transform3DPoint(end, transform);
+    
+    if (startPoint != null && endPoint != null) {
+      canvas.drawLine(startPoint, endPoint, paint);
+      _drawAxisLabel(canvas, label, endPoint, color);
+    }
+  }
+  
+  void _drawAxisLabel(Canvas canvas, String label, Offset position, Color color) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    
+    textPainter.paint(canvas, position);
+  }
+  
+  void _drawSelectionBox(Canvas canvas, vector.Matrix4 transform) {
+    final boxPaint = Paint()
+      ..color = Colors.yellow.withOpacity(0.3)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    
+    const boxSize = 110.0;
+    final corners = [
+      vector.Vector3(-boxSize / 2, -boxSize / 2, -boxSize / 2),
+      vector.Vector3(boxSize / 2, -boxSize / 2, -boxSize / 2),
+      vector.Vector3(boxSize / 2, boxSize / 2, -boxSize / 2),
+      vector.Vector3(-boxSize / 2, boxSize / 2, -boxSize / 2),
+      vector.Vector3(-boxSize / 2, -boxSize / 2, boxSize / 2),
+      vector.Vector3(boxSize / 2, -boxSize / 2, boxSize / 2),
+      vector.Vector3(boxSize / 2, boxSize / 2, boxSize / 2),
+      vector.Vector3(-boxSize / 2, boxSize / 2, boxSize / 2),
+    ];
+    
+    final transformedCorners = corners
+        .map((c) => _transform3DPoint(c, transform))
+        .where((p) => p != null)
+        .cast<Offset>()
+        .toList();
+    
+    if (transformedCorners.length == 8) {
+      final edges = [
+        [0, 1], [1, 2], [2, 3], [3, 0], // Front face
+        [4, 5], [5, 6], [6, 7], [7, 4], // Back face
+        [0, 4], [1, 5], [2, 6], [3, 7], // Connecting edges
+      ];
+      
+      for (var edge in edges) {
+        canvas.drawLine(
+          transformedCorners[edge[0]],
+          transformedCorners[edge[1]],
+          boxPaint,
+        );
+      }
+    }
+  }
+  
+  void _drawScatterPlot(Canvas canvas, DataPlot3D plot, vector.Matrix4 transform) {
+    final paint = Paint()
+      ..color = plot.color
+      ..style = PaintingStyle.fill;
+    
+    for (var point in plot.data) {
+      final pos = _transform3DPoint(
+        vector.Vector3(point.x, -point.y, point.z),
+        transform,
+      );
+      
+      if (pos != null) {
+        canvas.drawCircle(pos, 4.0, paint);
+      }
+    }
+  }
+  
+  void _drawLinePlot(Canvas canvas, DataPlot3D plot, vector.Matrix4 transform) {
+    if (plot.data.length < 2) return;
+    
+    final paint = Paint()
+      ..color = plot.color
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+    
+    final path = Path();
+    bool started = false;
+    
+    for (var point in plot.data) {
+      final pos = _transform3DPoint(
+        vector.Vector3(point.x, -point.y, point.z),
+        transform,
+      );
+      
+      if (pos != null) {
+        if (!started) {
+          path.moveTo(pos.dx, pos.dy);
+          started = true;
+        } else {
+          path.lineTo(pos.dx, pos.dy);
+        }
+      }
+    }
+    
+    canvas.drawPath(path, paint);
+    
+    // Draw points on top
+    final pointPaint = Paint()
+      ..color = plot.color
+      ..style = PaintingStyle.fill;
+    
+    for (var point in plot.data) {
+      final pos = _transform3DPoint(
+        vector.Vector3(point.x, -point.y, point.z),
+        transform,
+      );
+      
+      if (pos != null) {
+        canvas.drawCircle(pos, 3.0, pointPaint);
+      }
+    }
+  }
+  
+  void _drawBarPlot(Canvas canvas, DataPlot3D plot, vector.Matrix4 transform) {
+    final paint = Paint()
+      ..color = plot.color.withOpacity(0.7)
+      ..style = PaintingStyle.fill;
+    
+    final strokePaint = Paint()
+      ..color = plot.color
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+    
+    for (var point in plot.data) {
+      final top = _transform3DPoint(
+        vector.Vector3(point.x, -point.y, point.z),
+        transform,
+      );
+      final bottom = _transform3DPoint(
+        vector.Vector3(point.x, 0, point.z),
+        transform,
+      );
+      
+      if (top != null && bottom != null) {
+        final barWidth = 6.0;
+        final rect = Rect.fromPoints(
+          Offset(top.dx - barWidth / 2, top.dy),
+          Offset(bottom.dx + barWidth / 2, bottom.dy),
+        );
+        canvas.drawRect(rect, paint);
+        canvas.drawRect(rect, strokePaint);
+      }
+    }
+  }
+  
+  void _drawEnvironmentLabel(
+    Canvas canvas,
+    GraphEnvironment3D environment,
+    vector.Matrix4 transform,
+    bool isSelected,
+  ) {
+    final labelPos = _transform3DPoint(
+      vector.Vector3(0, -70, 0),
+      transform,
+    );
+    
+    if (labelPos != null) {
       final textPainter = TextPainter(
         text: TextSpan(
-          text: _formatValue(value),
+          text: environment.name,
           style: TextStyle(
-            color: Colors.white.withOpacity(0.5),
-            fontSize: 9,
+            color: isSelected ? Colors.white : Colors.white70,
+            fontSize: 14,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
         textDirection: TextDirection.ltr,
+      )..layout();
+      
+      // Draw background
+      final bgRect = Rect.fromCenter(
+        center: labelPos,
+        width: textPainter.width + 16,
+        height: textPainter.height + 8,
       );
-      textPainter.layout();
-      textPainter.paint(canvas, startPoint - Offset(textPainter.width + 5, textPainter.height / 2));
+      
+      final bgPaint = Paint()
+        ..color = Colors.black.withOpacity(0.7)
+        ..style = PaintingStyle.fill;
+      
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(bgRect, const Radius.circular(4)),
+        bgPaint,
+      );
+      
+      // Draw text
+      textPainter.paint(
+        canvas,
+        labelPos - Offset(textPainter.width / 2, textPainter.height / 2),
+      );
     }
   }
   
-  String _formatValue(double value) {
-    if (value >= 1e12) {
-      return '${(value / 1e12).toStringAsFixed(1)}T';
-    } else if (value >= 1e9) {
-      return '${(value / 1e9).toStringAsFixed(1)}B';
-    } else if (value >= 1e6) {
-      return '${(value / 1e6).toStringAsFixed(1)}M';
-    } else if (value >= 1e3) {
-      return '${(value / 1e3).toStringAsFixed(1)}K';
-    }
-    return value.toStringAsFixed(0);
-  }
-
-  Offset _project3D(Point3D point, Offset center) {
-    // Apply rotations
-    var rotated = point.rotateX(rotationX);
-    rotated = rotated.rotateY(rotationY);
-    rotated = rotated.rotateZ(rotationZ);
-
-    // Apply zoom
-    rotated = rotated.scale(zoom);
-
-    // Simple perspective projection
-    final perspective = 500;
-    final factor = perspective / (perspective + rotated.z);
+  Offset? _transform3DPoint(vector.Vector3 point, vector.Matrix4 transform) {
+    final transformed = transform.transform3(point);
+    
+    // Perspective projection - cull points behind camera
+    if (transformed.z < -500) return null;
+    
+    final perspective = 1 / (1 + transformed.z * 0.001);
     
     return Offset(
-      center.dx + rotated.x * factor,
-      center.dy + rotated.y * factor,
+      transformed.x * perspective,
+      transformed.y * perspective,
     );
   }
-
-  @override
-  bool shouldRepaint(TableVisualizationPainter oldDelegate) {
-    return oldDelegate.rotationX != rotationX ||
-           oldDelegate.rotationY != rotationY ||
-           oldDelegate.rotationZ != rotationZ ||
-           oldDelegate.zoom != zoom ||
-           oldDelegate.pan != pan ||
-           oldDelegate.hoveredPoint != hoveredPoint;
-  }
-}
-
-class Point3D {
-  final double x;
-  final double y;
-  final double z;
-
-  Point3D(this.x, this.y, this.z);
-
-  Point3D rotateX(double angle) {
-    final cos = math.cos(angle);
-    final sin = math.sin(angle);
-    return Point3D(
-      x,
-      y * cos - z * sin,
-      y * sin + z * cos,
-    );
-  }
-
-  Point3D rotateY(double angle) {
-    final cos = math.cos(angle);
-    final sin = math.sin(angle);
-    return Point3D(
-      x * cos + z * sin,
-      y,
-      -x * sin + z * cos,
-    );
-  }
-
-  Point3D rotateZ(double angle) {
-    final cos = math.cos(angle);
-    final sin = math.sin(angle);
-    return Point3D(
-      x * cos - y * sin,
-      x * sin + y * cos,
-      z,
-    );
-  }
-
-  Point3D scale(double factor) {
-    return Point3D(x * factor, y * factor, z * factor);
-  }
-}
-
-class DataPoint {
-  final String fieldName;
-  final double value;
-  final String? period;
-  final Offset screenPosition;
-
-  DataPoint({
-    required this.fieldName,
-    required this.value,
-    this.period,
-    required this.screenPosition,
-  });
-}
-
-class DataPointInfo {
-  final Offset screenPosition;
-  final String fieldName;
-  final double value;
-  final String quarter;
-  final String documentId;
   
-  DataPointInfo({
-    required this.screenPosition,
-    required this.fieldName,
-    required this.value,
-    required this.quarter,
-    required this.documentId,
-  });
+  @override
+  bool shouldRepaint(covariant Visualization3DPainter oldDelegate) {
+    return environments != oldDelegate.environments ||
+           selectedEnvironmentId != oldDelegate.selectedEnvironmentId ||
+           camera != oldDelegate.camera;
+  }
+}
+
+
+// ============ UTILITY FUNCTIONS ============
+
+/// Helper to generate sample data for testing
+List<DataPoint3D> generateSampleData({
+  int count = 20,
+  double range = 50,
+  int seed = 0,
+}) {
+  final random = math.Random(seed);
+  final data = <DataPoint3D>[];
+  
+  for (int i = 0; i < count; i++) {
+    data.add(DataPoint3D(
+      x: random.nextDouble() * range * 2 - range,
+      y: random.nextDouble() * range * 2 - range,
+      z: random.nextDouble() * range * 2 - range,
+      label: 'Point ${i + 1}',
+      value: random.nextDouble() * 1000,
+    ));
+  }
+  
+  return data;
+}
+
+/// Color palette for plots
+class PlotColors {
+  static const List<Color> palette = [
+    Color(0xFF2196F3), // Blue
+    Color(0xFF4CAF50), // Green
+    Color(0xFFF44336), // Red
+    Color(0xFFFF9800), // Orange
+    Color(0xFF9C27B0), // Purple
+    Color(0xFF00BCD4), // Cyan
+    Color(0xFFE91E63), // Pink
+    Color(0xFF3F51B5), // Indigo
+    Color(0xFF009688), // Teal
+    Color(0xFFFFEB3B), // Yellow
+  ];
+  
+  static Color getColor(int index) {
+    return palette[index % palette.length];
+  }
 }
